@@ -1,0 +1,999 @@
+// PlugIn Script: III Login Script for Signup VX
+//---------------------------------------------------------------------------------------
+//  Designed for:  Pharos 9.0 R2
+//  Where:         Pharos Systems International.
+//
+//  	Description:
+//    	Handle logon event using Innovative gateway.  Blocks based on MBlock, Filtcode, 
+//    	fine amount, and expiration date.The patron Alias will be first two letters of 
+//	last name, first letter of first name and last 7 digits of barcode minus the last 
+//	digit.   
+//    	
+//---------------------------------------------------------------------------------------
+import "DB";
+import "IO";
+import "List";
+import "String";
+import "User";
+import "Win32";
+
+//---------------------------------------------------------------------------------------
+// Script Info
+//---------------------------------------------------------------------------------------
+// Script name and version.
+
+new sScriptName          = "LibNameHere III Login";
+
+IO.PrintLine("Solution: " + sScriptName);
+IO.PrintLine("Version: 9.0 R2");
+IO.PrintLine("Copyright: Pharos Systems International");
+
+
+//---------------------------------------------------------------------------------------
+// Variables
+//---------------------------------------------------------------------------------------
+// - Change the ** variable sections to fit the libraries settings.
+//-------------------------------------------------------
+// Error messages 
+// - Change the text between the quotes where necessary.
+//-------------------------------------------------------
+new eErrorInvalidUserNamePassword      = "Invalid username or pin";
+new eErrorPinNotValid	       	         = "Invalid Pin.";
+new eErrorPlugInResultsNotValid        = "Results from Logon plug-in are not valid. Please go to the Circulation Desk.";
+new eErrorPasswordIsEmpty              = "You must enter a pin.";
+new eErrorFeesTooLarge                 = "You have exceeded the fine limit. You must pay your fines before you can access the system.";
+new eErrorBirthDateIsNotAvailable      = "You cannot logon as the system cannot determine your age. Please go to the Circulation Desk.";
+new eErrorProfileIsNotAvailable        = "You cannot logon as the system cannot determine your profile. Please go to the Circulation Desk.";
+new eErrorUserExpired                  = "Your account has expired. Please go to the Circulation Desk to update your library card.";
+new eErrorFailedToCheckExpiry          = "Unable to verify the expiry date on your account. Please go to the Circulation Desk.";
+new eErrorFiltcode                     = "Your account is blocked (FILTCODE).  Please go to the Circulation Desk.";
+new eErrorInetAgree		                 = "Your Account is blocked.  Internet Agreement not signed.  Please go to the circulation desk.";
+new eErrorMblock                       = "Your account is blocked (MBLOCK).  Please go to the Circulation Desk.";
+new eErrorInvalidCardNumber	           = "Invalid Card Number.  Make sure you enter your full card number with no spaces.";
+
+
+//-------------------------------------------------------
+// Logon Plug-in information
+//-------------------------------------------------------
+// - Logon Plug-in full path and executable name.
+// new sCmdLogonPlugInFileName            = "C:\\Program Files\\Pharos\\Bin\\iplgnext.exe";
+
+// While the path can be hard-coded here as a string, this tends to break in heterogeneous
+// environments, e.g. mixed 32- and 64-bit servers.  If possible, install plugins relative
+// to the Pharos installation folder and query the registry for the starting point:
+new sPharosPath = Win32.RegQueryValue("SOFTWARE\\Pharos\\Installed Components", "Path");
+
+
+// IO.PrintLine("DEBUG --> sPharosPath = [" + sPharosPath  + "]");
+
+// - Uncomment the appropriate line based on bit version of the Pharos Release Station (Depreciated - Don't Use)-
+// new sPharosPath = "c:\\Progra~1\\pharos"; //x86
+// new sPharosPath = "c:\\Progra~2\\pharos"; //x64
+
+// Path to create temporary files
+// new sTempPath = sPharosPath + "\\Temp\\";
+
+// Results file for user info.
+//new sResFile = sTempPath + PlugIn.Client + ".tmp";
+
+// Win32.SearchPath will return the shortened path and file names.
+// Be sure to specify the remainder of the path relative to the Pharos folder.
+new sCmdLogonPlugInFileName = sPharosPath + "\\Bin\\iplgnext ";
+
+// - Logon Plug-in timeout (milliseconds)
+new iCmdTimeout = 30000;
+
+
+//-------------------------------------------------------
+// User Name Formatting
+//-------------------------------------------------------
+// - Define the format that the name is returned from Innovative
+new iNameFormatFirstLast               = 1; // "<<First Name>> <<Last Name>>"
+new iNameFormatLastFirst               = 2; // "<<Last Name>>, <<First Name>>"
+new iNameFormatLast                    = 3; // "<<Last Name>>"
+
+new iNameFormat                        = iNameFormatLastFirst;   
+
+
+//-------------------------------------------------------
+// Group membership 
+//-------------------------------------------------------
+// - Define if the user's Pharos group membership should
+//   be determined from age, profile, or use default.
+new iGroupMembershipDefault            = 1; // Assign all users to default group (sDefaultGroup)
+new iGroupMembershipAge                = 2; // Assign users to Pharos group based on age.
+new iGroupMembershipProfile            = 3; // Assign users to Pharos group based on profile.
+
+new iGroupMembership                   = iGroupMembershipAge; 
+
+
+//---------------------------------------------------
+// User account settings and logon configuration
+//---------------------------------------------------
+// - Default Pharos account group name
+new sDefaultGroup                      = "wvrh_adult"; 
+new fDefaultMaximumFeeAmount           = 10.00;
+
+
+// ** - Defined age groups, corresponding Pharos group name, maximum fee amount
+new listDefaultGroupByAge              = 
+[ 
+    // [ Minimum age, maximum age, group, maximum fee amount ]
+	 	[0, 17, "wvxx_child", 5.00],
+	  [18, 200, "wvxx_adult", 5.00]
+];
+
+
+// - Defined user profile names, corresponding Pharos group name, maximum fee amount
+//   Profile names are case sensitive.
+new listPatronTypesToGroups            =
+[
+    ["99", "young adult", 2.00],
+    ["67", "young adult", 2.00],
+    ["98", "juvenille", 2.00],
+    ["251", "juvenille", 2.00]
+];
+
+// ** - List of Mblocks that will prevent a user using the system. - **
+//   Blocks are case sensitive.
+new listMblocks                         =
+[
+    
+];
+
+// - List of Filtcodes that will prevent the user using the system. 
+//	 Blocks are case sensitive.
+//	WVLS does not use FILTCODE - This is for IFLS use only
+new listFiltcodes						=
+[
+	
+];
+
+// - Default Pharos account billing option
+new sDefaultBillingOption              = "Advance";
+
+// ** - Logon configuration settings - **
+new bUsePharosDBIfLMSOffline           = false;  // If true, users will be authenticated against the Pharos DB whenever the LMS is
+                                                // unavailable. Requires that the user exists in the Pharos Database.
+                                                // NOTE - this will bypass all LMS checks and updates.                                                
+new bIsPasswordRequired                = true;  // If true, do not pass logon to Innovative unless password has been entered.
+new bIsFeeAmountChecked                = true;  // ** If true, do not allow logon if the fee amount exceeds the maximum allowed. **
+new bIsBirthDateRequired               = true;  // ** If true, do not allow logon if birthdate cannot be retrieved (if basing
+                                                // Pharos group membership on age). **
+new bIsProfileRequired                 = false;  // If true, do not allow logon if profile cannot be retrieved (if basing
+                                                // Pharos group membership on profile).                                                
+new bCheckMblockFlags                  = false;  // ** If true, check the MBlocks. **
+new bCheckInetAgree		       = false; // If true, check for Filtcode 1 or 2 for minors.
+new bCheckFiltcodeFlags		       = false;	// If true, check the Filtcodes.
+new bCheckExpiration                   = true;  // ** If true, check for card expiration. **
+
+//---------------------------------------------------------------------------------------
+// Constants – DO NOT ALTER
+//---------------------------------------------------------------------------------------
+
+// Character constants
+new sCharCR                            = "\n";
+new sCharSingleQuote                   = "'";
+new sCharSpace                         = " ";
+new sCharComma                         = ",";
+new sCharQuote                         = "\"";
+new sCharForwardSlash                  = "/";
+
+
+// Access levels
+new sAccessLevelUser                   = "User";
+
+
+// Logon PlugIn constants
+// - Connectivity Issues
+new sPlugInResultConnectionIssue       = "Windows socket error";
+new sPlugInResultUnsupportedCard       = "Unsupported card type";
+
+// - Generic
+new sPlugInResultSuccess               = "OK";
+new listPlugInResultEndOfLines         = ["<BR>", "<BR />", "<br>", "<br />"];
+
+// - Specific
+new sPlugInResultMblock                = "MBLOCK[p56]=";
+new sPlugInResultFiltcode	       = "FILTCODE[p45]=";
+new sPlugInResultExpiry                = "EXP DATE[p43]=";
+new sPlugInResultPatronType            = "P TYPE[p47]=";
+new sPlugInResultPersonalName          = "PATRN NAME[pn]=";
+new sPlugInResultMoneyOwed             = "MONEY OWED[p96]=$";
+new sPlugInResultBirthDate             = "BIRTH DATE[p51]=";
+
+// Innovative date format lengths - assumes that the Innovative
+// system is configured to return dates as mm-dd-yyyy.
+// Script will not support other formats.
+new iPlugInResultYearLength            = 4;
+new iPlugInResultMonthLength           = 2;
+new iPlugInResultDayLength             = 2;
+
+// - List of Filtcodes for internet agreement.
+new listInetcodes						=
+[
+	 "1", "2"
+];
+
+
+//---------------------------------------------------------------------------------------
+// PlugIn code
+//---------------------------------------------------------------------------------------
+
+//---------------------------------------------------
+// Default the script to fail. Set default error
+// message to Invalid Username/Password. 
+//---------------------------------------------------
+PlugIn.Result = false;
+PlugIn.Error = eErrorInvalidUserNamePassword;
+
+//----------------------------------------------
+// Initialize key script variables
+//----------------------------------------------
+new bIsInnovativeValidationRequired  = true;
+
+
+IO.PrintLine("[" + sScriptName + "] -> UserName: " + PlugIn.UserName);
+
+//---------------------------------------------------
+// Check if the user exists in the Pharos database.
+//---------------------------------------------------
+new bUserExistsInPharosDB = false;
+
+try
+{
+    User.GetUserByLogon(PlugIn.UserName);
+
+    IO.PrintLine("[" + sScriptName + "] -> User exists in Pharos database.");
+
+    // Get user's access level and other flags.
+    bUserExistsInPharosDB = true;
+    new sUserAccessLevel  = User.GetProperty("access_level");
+    new bUserIsExpress    = (User.GetProperty("is_express") == 1);
+    new bUserIsVisitor    = (User.GetProperty("is_visitor") == 1);
+
+    if ((sUserAccessLevel <> sAccessLevelUser) or
+        bUserIsExpress or
+        bUserIsVisitor)
+    {
+        bIsInnovativeValidationRequired = false;
+    }
+
+
+}
+catch
+{
+    IO.PrintLine("[" + sScriptName + "] -> User does not exist in Pharos database.");
+}
+
+
+//---------------------------------------------------
+// Check if Innovative validation is required or not.
+//---------------------------------------------------
+if (not bIsInnovativeValidationRequired)
+{
+    IO.PrintLine("[" + sScriptName + "] -> User either does not have 'User' access level, is an express user, or is a visitor user. Handled in Pharos DB.");
+    // Handle validation in Pharos database.
+    PlugIn.Result = true;
+    PlugIn.Handled = false;
+}
+else
+{
+ 	//---------------------------------------------------
+	// Check if the user must enter a password (if
+	// enabled.
+	//---------------------------------------------------
+	if (String.IsEmpty(PlugIn.Password) and 
+		bIsPasswordRequired)
+	{
+		IO.PrintLine("[" + sScriptName + "] -> User entered an empty password. Fail the logon.");
+		PlugIn.Result = false;
+		PlugIn.Error = eErrorPasswordIsEmpty;
+	}
+	else
+	{
+		//---------------------------------------------------
+		// Check the user using Innovative
+		//---------------------------------------------------
+		IO.PrintLine("[" + sScriptName + "] -> Check user using Innovative.");
+		
+	new sCmdTemporaryFile = Win32.GetTempFileName();		
+		new sCmdLogonPlugIn = sCmdLogonPlugInFileName += sCmdTemporaryFile + " User " + PlugIn.UserName + " " + PlugIn.Password;
+ 
+		IO.PrintLine("[" + sScriptName + "] -> PlugIn Command: " + sCmdLogonPlugIn);                       
+		Win32.ExecProcess(sCmdLogonPlugIn, iCmdTimeout);
+ 
+		//---------------------------------------------------
+		// Build results from Innovative into a list
+		//---------------------------------------------------
+		new sCmdResults = "";
+		IO.LoadFile(sCmdResults, sCmdTemporaryFile);
+		IO.DeleteFile(sCmdTemporaryFile);
+
+		new listCmdResults = [];
+
+		// Get the Logon plug-in results into a list.
+		new iPos = String.Find(sCmdResults, sCharCR);
+		while (iPos <> -1)
+		{
+			new sCmdResultLine = sCmdResults;
+			String.Left(sCmdResultLine, iPos);
+			String.Delete(sCmdResults, 0, iPos + 1);
+
+			String.TrimLeft(sCmdResultLine);
+			String.TrimRight(sCmdResultLine);
+
+			new iCount = 0;
+			while (iCount < List.Length(listPlugInResultEndOfLines))
+			{
+				new iBreakPos = String.Find(sCmdResultLine, listPlugInResultEndOfLines[iCount]);
+				if (iBreakPos <> -1)
+				{
+					String.Delete(sCmdResultLine, iBreakPos);
+					iCount = List.Length(listPlugInResultEndOfLines);
+				}
+				iCount += 1;
+			}
+
+			listCmdResults += sCmdResultLine; 
+			iPos = String.Find(sCmdResults, sCharCR);
+		} // while (iPos <> -1)
+
+		if (not String.IsEmpty(sCmdResults))
+		{
+			listCmdResults += sCmdResults; 
+		}
+
+		// Output the results.
+		IO.PrintLine("[" + sScriptName + "] -> PlugIn Results: " + listCmdResults);
+
+		//---------------------------------------------------
+		// Check that a) there were results and b) that the
+		// results indicate success.
+		//---------------------------------------------------
+		new bIsCmdResultValid = false;
+		if (List.Length(listCmdResults) > 0)
+		{
+			// Check if the logon was successful.
+			if (listCmdResults[0] == sPlugInResultSuccess)
+			{
+				// Logon was successful.
+				bIsCmdResultValid = true;
+				IO.PrintLine("[" + sScriptName + "] -> User authentication is valid.");
+				PlugIn.Result = true;     
+			}
+			else
+			{
+				// Logon failed. Check there is an error message.
+				if (List.Length(listCmdResults) > 1)
+				{
+					bIsCmdResultValid = true;
+
+					IO.PrintLine("[" + sScriptName + "] -> User authentication failed. Error: " + listCmdResults[1]);  
+					PlugIn.Result = false;
+					PlugIn.Error = listCmdResults[1];
+					
+					if (String.Find(PlugIn.Error, sPlugInResultUnsupportedCard) <> -1)
+					{
+						PlugIn.Error = eErrorInvalidCardNumber;
+					}
+					
+					if ((String.Find(PlugIn.Error, sPlugInResultConnectionIssue) <> -1) and
+						bUsePharosDBIfLMSOffline and
+						bUserExistsInPharosDB)
+					{
+						IO.PrintLine("[" + sScriptName + "] -> LMS is unavailable. Attempting to use user account in Pharos database to validate user.");   
+						PlugIn.Result = true;
+						PlugIn.Handled= false;
+						exit;
+					}
+				}
+
+			} // else/if (listCmdResults[0] == sPlugInResultSuccess)
+
+	   } // if (List.Length(listCmdResults) > 0)
+
+	   if (not bIsCmdResultValid)
+	   {
+			IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorPlugInResultsNotValid);
+			PlugIn.Result = false;
+			PlugIn.Error = eErrorPlugInResultsNotValid;
+		} // if (not bIsCmdResultValid)
+
+	} // else/if (String.IsEmpty(PlugIn.Password) ...
+		
+	//---------------------------------------------------
+    // Initialize user variables.
+    //---------------------------------------------------
+    new iUserAge        = -1;    
+    new sUserFirstName  = "";
+    new sUserLastName   = "";
+    new fUserFeeAmount  = 0.00;    
+    new fGroupFeeLimit  = fDefaultMaximumFeeAmount;
+    new sUserGroup      = sDefaultGroup;
+    new bIsMblocked     = false;
+    new bIsExpired      = false; 
+
+    //---------------------------------------------------
+    // Attempt to check the user's card expiration
+    // and Blocks.
+    //---------------------------------------------------
+    if (PlugIn.Result)
+    {
+        // If enabled, check that the user is not blocked (MBlock).
+        if (bCheckMblockFlags)
+        {
+            IO.PrintLine("[" + sScriptName + "] -> Check Mblocks.");  
+
+            // Find the block tag in the Logon plug-in results.
+            new iCount = 0;
+            while (iCount < List.Length(listCmdResults))
+            {
+                new iPos = String.Find(listCmdResults[iCount], sPlugInResultMblock);
+                if (iPos <> -1)
+                {
+                    // Get the Mblock value.
+                    new sValueMblock = listCmdResults[iCount];
+                    String.Delete(sValueMblock, 0, iPos + String.Length(sPlugInResultMblock));
+
+                    IO.PrintLine("[" + sScriptName + "] -> Value - Mblock: " + sValueMblock);  
+
+                    // Check if the value equates to the user being blocked.
+                    new iCount2 = 0;
+                    while (iCount2 < List.Length(listMblocks))
+                    {
+                        if (sValueMblock == listMblocks[iCount2])
+                        {
+                            bIsMblocked = true;
+                            iCount2 = List.Length(listMblocks);
+                        }
+                        iCount2 += 1;
+                    }
+                    iCount = List.Length(listCmdResults);
+                }
+                iCount += 1;
+            }
+			IO.PrintLine("[" + sScriptName + "] -> User MBlocked: " + bIsMblocked);
+        }
+		
+	// If enabled, check the user expiration date.
+        if (bCheckExpiration)
+        {
+            IO.PrintLine("[" + sScriptName + "] -> Check expiration.");  
+ 
+            // Find the expiration tag in the Logon plug-in results.
+            new iCount = 0;
+            while (iCount < List.Length(listCmdResults))
+            {
+                new iPos = String.Find(listCmdResults[iCount], sPlugInResultExpiry);
+                if (iPos <> -1)            
+                {
+                    // Get the expiration value.
+                    new sValueExpiration = listCmdResults[iCount];
+                    String.Delete(sValueExpiration, 0, iPos + String.Length(sPlugInResultExpiry));
+ 
+                    IO.PrintLine("[" + sScriptName + "] -> Value - Expiration: " + sValueExpiration);  
+
+                    try
+                    {
+                        new sSQLCheckExpiration =
+                            "if ( datediff(dd, @1, getdate()) > 1) " +
+                            "begin " + 
+                            "    select 1 [expired] " +
+                            "end " +
+                            "else " +
+                            "begin " +
+                            "    select 0 [expired] " +
+                            "end";
+                        
+                        DB.ParametrizedSQL(sSQLCheckExpiration, sValueExpiration);
+                        if (DB.GetRow())
+                        {
+                            bIsExpired = (DB.ColumnByName("expired") == 1);
+                        }
+                    }
+                    catch
+                    {
+                        IO.PrintLine("[" + sScriptName + "] -> Failed to check expiration. Skip expiration check.");                             
+                    }
+                    iCount = List.Length(listCmdResults);
+                }
+                iCount += 1;
+            }
+			IO.PrintLine("[" + sScriptName + "] -> User Expired: " + bIsExpired);
+        }       
+           
+        if (bIsMblocked)
+        {
+            IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorMblock);   
+            PlugIn.Result = false;
+            PlugIn.Error = eErrorMblock;
+        }
+		else if (bIsExpired)
+        {
+            IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorUserExpired);   
+            PlugIn.Result = false;
+            PlugIn.Error = eErrorUserExpired;
+        }
+    }
+
+
+    //---------------------------------------------------
+    // Attempt to get the user's personal name. Then
+    // attempt to reduce the personal name to first name
+    // and last name as configured. Note - if initial
+    // is returned, the <<Last Name, First Name>> setting
+    // must be used.
+    //---------------------------------------------------
+    if (PlugIn.Result)
+    {
+        // Attempt to get the user's name.
+        new iCount             = 1;
+        new bFoundPersonalName = false;
+        while (iCount < List.Length(listCmdResults) and
+               not bFoundPersonalName)
+        {
+            new iPos = String.Find(listCmdResults[iCount], sPlugInResultPersonalName);
+            if (iPos <> -1)
+            {
+                IO.PrintLine("[" + sScriptName + "] -> User's full name found.");
+                bFoundPersonalName = true;
+     
+                new sUserPersonalName = listCmdResults[iCount];
+                String.Delete(sUserPersonalName, 0, iPos + String.Length(sPlugInResultPersonalName));
+
+                sUserFirstName = sUserPersonalName;
+                sUserLastName = sUserPersonalName;
+
+                // "<<First Name>> <<Last Name>>"
+                if (iNameFormat == iNameFormatFirstLast)
+                {
+                    iPos = String.Find(sUserFirstName, sCharSpace);
+                    if (iPos == -1)
+                    {
+                        sUserFirstName = "";
+                    }
+                    else
+                    {
+                        String.Delete(sUserFirstName, iPos);
+                    }
+                            
+                    if (iPos <> -1)
+                    {
+                        String.Delete(sUserLastName, 0, iPos + 1);
+                    }
+                } // "<<First Name>> <<Last Name>>"
+                
+                // "<<Last Name>>, <<First Name>>"
+                else if (iNameFormat == iNameFormatLastFirst)
+                {
+                    iPos = String.Find(sUserFirstName, sCharComma);
+                    if (iPos == -1)
+                    {
+                        sUserFirstName = "";
+                    }
+                    else
+                    {
+                        String.Delete(sUserFirstName, 0, iPos + 1);
+                    }
+                            
+                    if (iPos <> -1)
+                    {
+                        String.Delete(sUserLastName, iPos);
+                    }
+		  } // "<<Last Name>>, <<First Name>>"
+
+                // "<<Last Name>>"                       
+                else if (iNameFormat == iNameFormatLast)
+                {
+                    sUserFirstName = "";
+                } // "<<Last Name>>" 
+ 
+                String.TrimLeft(sUserFirstName);              
+                String.TrimRight(sUserFirstName);
+                String.TrimLeft(sUserLastName);
+                String.TrimRight(sUserLastName);
+
+            } // if (iPos <> -1)
+
+            iCount += 1;
+    
+        } // while (iCount < List.Length(listCmdResults) and ...
+        
+	// Check for Middle Initial and delete.
+	new iPos1 = String.Find(sUserFirstName, sCharSpace);
+	if (iPos1 <> -1)
+	{
+		String.Delete(sUserFirstName, iPos1);
+	}
+
+        IO.PrintLine("[" + sScriptName + "] -> User's first name: " + sUserFirstName);
+        IO.PrintLine("[" + sScriptName + "] -> User's last name: " + sUserLastName);        
+
+    } // if (PlugIn.Result and ...
+	
+	//-------------------------------------------------------
+	// Create an alias.
+	// The patron Alias will be first two letters of last name,
+	// first letter of first name and last 7 digits of barcode
+	// minus the last digit.
+	//-------------------------------------------------------
+	new sNewUserLN = sUserLastName;
+    new sCardNumber = PlugIn.UserName;
+	
+	if (PlugIn.Result)
+	{          
+	    String.Right(sCardNumber,7);
+        String.Delete(sCardNumber,6);
+        String.TrimLeft(sNewUserLN);
+	// Make sure the newlastname is greater than 2 characters.
+           if(String.Length(sNewUserLN) > 2)
+           {
+           	String.Delete(sNewUserLN,2);
+           }
+	// Make sure the firstname is greater than 1 character.
+           if(String.Length(sUserFirstName) > 1)
+           {        
+           	String.Delete(sUserFirstName,1);
+           }  
+           new sUserAlias = sNewUserLN+sUserFirstName+sCardNumber;
+		   IO.PrintLine("[" + sScriptName + "] -> User's Alias: " + sUserAlias);
+	   // Protect against duplicate Aliases~~~~~~~~~~~~~~~~~~~~~~~
+	   // Add ' to sUserAlias if it already has one.
+
+	   if(String.Find(sUserAlias,  "'") <> -1)
+	   {
+	   	new pos = String.Find(sUserAlias, "'");
+		String.Insert(sUserAlias, pos, "'");
+	   }
+            new anum = 1;
+            new gen = "0";
+               while(gen == "0")
+               {
+               	new strqry = "select id, User_Alias from users where User_Alias = '" + sUserAlias +"' and id <> '" + PlugIn.UserName + "'";
+                DB.SQL(strqry);
+                  if(DB.GetRow())
+                  {
+                 	new sUserAlias = sNewUserLN+sUserFirstName+sCardNumber + anum;
+			IO.PrintLine("[" + sScriptName + "] -> Duplicate alias found, creating a new alias.");
+                  	IO.PrintLine("[" + sScriptName + "] -> User's Alias: " + sUserAlias);
+                  	new anum = anum + 1;
+                  }
+                  else
+                  {
+                  	new gen = "1";
+                  }
+               }
+
+	if(String.Find(sUserAlias,  "''") <> -1)
+	{
+		new pos = String.Find(sUserAlias, "'");
+		String.Delete(sUserAlias, pos, 1);
+	}
+	}
+
+    IO.PrintLine("[" + sScriptName + "] -> Group Membership Mode: " + iGroupMembership);
+
+    //-------------------------------------------------------
+    // If group membership is based on age:
+    // Attempt to determine the user's age. If available,
+    // determine the correct group for the user.
+    //-------------------------------------------------------
+    if ((iGroupMembership == iGroupMembershipAge) and
+        PlugIn.Result)
+    {
+        // Attempt to get the user's birth date.
+        new iCount             = 1;
+        new bFoundBirthdate    = false;
+        while (iCount < List.Length(listCmdResults) and
+               not bFoundBirthdate)
+        {
+            new iPos = String.Find(listCmdResults[iCount], sPlugInResultBirthDate);
+            if (iPos <> -1)
+            {
+                IO.PrintLine("[" + sScriptName + "] -> User's birth date found.");
+                bFoundBirthdate = true;
+     
+                new sUserBirthDay = listCmdResults[iCount];
+                String.Delete(sUserBirthDay, 0, iPos + String.Length(sPlugInResultBirthDate));
+                new sUserBirthMonth = sUserBirthDay;
+                new sUserBirthYear = sUserBirthDay;
+
+                if (String.Length(sUserBirthDay) >= (iPlugInResultYearLength + iPlugInResultMonthLength + iPlugInResultDayLength))
+		{
+			String.Delete(sUserBirthMonth, iPlugInResultMonthLength);
+                    	String.Mid(sUserBirthDay, iPlugInResultMonthLength + 1, iPlugInResultDayLength);
+                    	String.Right(sUserBirthYear, iPlugInResultYearLength);
+                    	IO.PrintLine("[" + sScriptName + "] -> Birthdate: " + sUserBirthMonth + "-" + sUserBirthDay + "-" + sUserBirthYear);
+                    
+                    		try
+                    		{
+                        		new sSQLGetAge = 
+                            		"declare @years_difference   int " +
+                            		"declare @months_difference  int " +
+                            		"declare @days_difference    int " +
+                            		"declare @birthyear          int " +
+                            		"declare @birthmonth         int " +
+                           		 "declare @birthday           int " +
+                           		 "set @birthmonth   = @1 " + 
+                            		"set @birthday  = @2 " + 
+                            		"set @birthyear    = @3 " + 
+                            		"select @years_difference = datediff(mm,  " +
+                            		"    cast(@birthmonth as nvarchar(10)) + N'/' +  " +
+                           		 "    cast(@birthday as nvarchar(10)) + N'/' +  " +
+                           		 "    cast(@birthyear as nvarchar(10)), getdate()) / 12 " +
+                           		 "select @months_difference = datediff(mm,  " +
+                           		 "    cast(@birthmonth as nvarchar(10)) + N'/' +  " +
+                           		 "    cast(@birthday as nvarchar(10)) + N'/' +  " +
+                            		"    cast(year(getdate()) as nvarchar(10)), getdate()) " +
+                           		"select @days_difference = datediff(dd,  " +
+                           		 "    cast(@birthmonth as nvarchar(10)) + N'/' +  " +
+                           		 "    cast(@birthday as nvarchar(10)) + N'/' +  " +
+                           		 "    cast(year(getdate()) as nvarchar(10)), getdate()) " +
+                            		"select " +
+                           		 "    case  " +
+                           		 "        when @months_difference = 0 and @days_difference < 0 then @years_difference - 1 else @years_difference " +
+                           		 "    end [age]";
+                        		DB.ParametrizedSQL(sSQLGetAge, sUserBirthMonth, sUserBirthDay, sUserBirthYear);
+                       			if (DB.GetRow()) 
+                        		{
+                            			iUserAge = 0 + DB.ColumnByName("age");
+                            			IO.PrintLine("[" + sScriptName + "] -> User's Age: " + iUserAge);
+                        		}  
+                    		}
+                    		catch
+                    	{
+                        	IO.PrintLine("[" + sScriptName + "] -> Failed to calculate age.");
+                    	}                    
+                }
+                else
+                {
+                    IO.PrintLine("[" + sScriptName + "] -> Date format is too short");
+                }
+            } // if (iPos <> -1)
+            iCount += 1;    
+        } // while (iCount < List.Length(listCmdResults) and ...
+ 
+        // Return an error if the age is not available and we need an age.
+        if (bIsBirthDateRequired and 
+            (iUserAge == -1))
+        {
+            IO.PrintLine("[" + sScriptName + "] -> User's age is required, but the user's age could not be determined.");
+            PlugIn.Result = false;
+            PlugIn.Error = eErrorBirthDateIsNotAvailable;
+        }
+        else if (iUserAge <> -1)
+        {
+            // Otherwise, find the correct group for the user's age.
+            new iCount = 0;
+            new bAgeGroupFound = false;
+            while ((iCount < List.Length(listDefaultGroupByAge)) and 
+                   not bAgeGroupFound)
+            {
+                if ((iUserAge >= listDefaultGroupByAge[iCount][0]) and
+                    (iUserAge <= listDefaultGroupByAge[iCount][1])) 
+                {
+                    sUserGroup = listDefaultGroupByAge[iCount][2];
+                    fGroupFeeLimit = listDefaultGroupByAge[iCount][3];
+
+                    bAgeGroupFound = true;
+                }
+                iCount += 1;            
+            }
+        }
+	// --------------------------------------------------
+	// Check for Filtcode blocks and internet agreement
+	// signed.
+	// --------------------------------------------------
+	
+	// If enabled, check that the user is not blocked (Filtcode).
+	new bIsFblocked		= false;
+						
+        if (bCheckFiltcodeFlags)
+        {
+            IO.PrintLine("[" + sScriptName + "] -> Check Filtcodes.");  
+
+            // Find the block tag in the Logon plug-in results.
+            new iCount = 0;
+            while (iCount < List.Length(listCmdResults))
+            {
+                new iPos = String.Find(listCmdResults[iCount], sPlugInResultFiltcode);
+                if (iPos <> -1)
+                {
+                    // Get the Filtcode value.
+                    new sValueFiltcode = listCmdResults[iCount];
+                    String.Delete(sValueFiltcode, 0, iPos + String.Length(sPlugInResultFiltcode));
+
+                    IO.PrintLine("[" + sScriptName + "] -> Value - Filtcode: " + sValueFiltcode);  
+
+                    // Check if the value equates to the user being blocked.
+                    new iCount2 = 0;
+                    while (iCount2 < List.Length(listFiltcodes))
+                    {
+                        if (sValueFiltcode == listFiltcodes[iCount2])
+                        {
+                            bIsFblocked = true;
+                            iCount2 = List.Length(listFiltcodes);
+                        }
+                        iCount2 += 1;
+                    }
+		    iCount = List.Length(listCmdResults);
+                }
+                iCount += 1;
+            }
+			IO.PrintLine("[" + sScriptName + "] -> User FBlocked: " + bIsFblocked);
+			
+			if (bIsFblocked)
+			{
+				IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorFiltcode);   
+				PlugIn.Result = false;
+				PlugIn.Error = eErrorFiltcode;
+			}
+        }
+
+		// If enabled check for Internet agreement signed.
+		if (bCheckInetAgree and (iUserAge < 18))
+		{
+			IO.PrintLine("[" + sScriptName + "] -> Check Inet Signed.");
+			
+			// Check for Filtcode 1 or 2.
+			new iCount3 = 0;
+			new bInetBlocked = true;
+			new bInetFound = false;
+            
+			while ((iCount3 < List.Length(listInetcodes)) and
+			not bInetFound)
+			{
+				if (sValueFiltcode == listInetcodes[iCount3])
+				{
+					bInetFound = true;
+					bInetBlocked = false;
+				}
+				iCount3 += 1;
+			}
+			IO.PrintLine("[" + sScriptName + "] -> User FBlocked (Inet agree): " + bInetBlocked);
+			if (bInetBlocked)
+			{
+				IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorInetAgree);   
+				PlugIn.Result = false;
+				PlugIn.Error = eErrorInetAgree;
+			}
+		}		
+    } // if (PlugIn.Result)
+
+    //---------------------------------------------------
+    // If group membership is based on P Type:
+    // Attempt to get the user's profile. From the
+    // profile, determine the user's group.
+    //---------------------------------------------------
+    if ((iGroupMembership == iGroupMembershipProfile) and
+        PlugIn.Result)
+    {
+        IO.PrintLine("[" + sScriptName + "] -> Check profile.");  
+
+        // Attempt to get the user's birth date.
+        new iCount             = 1;
+        new bFoundProfile      = false;
+        while (iCount < List.Length(listCmdResults) and
+               not bFoundProfile)
+        {
+            new iPos = String.Find(listCmdResults[iCount], sPlugInResultPatronType);
+            if (iPos <> -1)
+            {
+                IO.PrintLine("[" + sScriptName + "] -> User's profile found.");
+     
+                new sValueUserProfile = listCmdResults[iCount];
+                String.Delete(sValueUserProfile, 0, iPos + String.Length(sPlugInResultPatronType));
+
+                IO.PrintLine("[" + sScriptName + "] -> Profile: " + sValueUserProfile);
+
+                // Find user group for profile.
+                new iCount2 = 0;
+                while (iCount2 < List.Length(listPatronTypesToGroups))
+                {
+                    if (sValueUserProfile == listPatronTypesToGroups[iCount2][0])
+                    {
+                        bFoundProfile = true;
+                        sUserGroup = listPatronTypesToGroups[iCount2][1];
+                        fGroupFeeLimit = listPatronTypesToGroups[iCount2][2];
+                        iCount2 = List.Length(listPatronTypesToGroups);
+                    }
+                    iCount2 += 1;
+                }
+
+            } // if (iPos <> -1)
+
+            iCount += 1;
+    
+        } // while (iCount < List.Length(listCmdResults) and ...
+
+        if (bIsProfileRequired and
+            not bFoundProfile)
+        {
+            IO.PrintLine("[" + sScriptName + "] -> User's profile is required, but could not be found or matched to a group.");
+            PlugIn.Result = false;
+            PlugIn.Error = eErrorProfileIsNotAvailable;
+        }
+    }
+    
+    //---------------------------------------------------
+    // Attempt to check the user's fee amount. If it
+    // is greater than the allowed fee amount, then 
+    // deny access to the system.
+    //---------------------------------------------------
+    if (PlugIn.Result and
+        bIsFeeAmountChecked)
+    {
+        // Attempt to get the user's fee amount.
+        new iCount             = 1;
+        new bFoundFeeAmount    = false;
+        while (iCount < List.Length(listCmdResults) and
+               not bFoundFeeAmount)
+        {
+            new iPos = String.Find(listCmdResults[iCount], sPlugInResultMoneyOwed);
+            if (iPos <> -1)
+            {
+                IO.PrintLine("[" + sScriptName + "] -> User's fee amount found.");
+                bFoundFeeAmount = true;
+     
+                new sUserFeeAmount = listCmdResults[iCount];
+                String.Delete(sUserFeeAmount, 0, iPos + String.Length(sPlugInResultMoneyOwed));
+
+                fUserFeeAmount = 0.00 + sUserFeeAmount;
+                
+            } // if (iPos <> -1)
+
+            iCount += 1;
+    
+        } // while (iCount < List.Length(listCmdResults) and ...
+        
+        IO.PrintLine("[" + sScriptName + "] -> User's fee amount: " + fUserFeeAmount);
+        IO.PrintLine("[" + sScriptName + "] -> Maximum fee amount: " + fGroupFeeLimit);
+                
+        if (fUserFeeAmount >= fGroupFeeLimit)
+        {
+            IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorFeesTooLarge);
+            PlugIn.Result = false;
+            PlugIn.Error = eErrorFeesTooLarge;        
+        }
+
+
+    } // if (PlugIn.Result and ...        
+
+
+    //---------------------------------------------------
+    // Synchronize the Pharos database by:
+    // - Creating the account if necessary
+    //   - Alias is generated from logon id, first name,
+    //     last name as per Pharos Administrator setting
+    //   - Billing option is set as per script default.
+    //   - Group is set as per script default.
+    // - Updating the first name and last name
+    //---------------------------------------------------
+    if (PlugIn.Result)
+    {
+        try
+        {
+            User.GetUserByLogon(PlugIn.UserName);
+            IO.PrintLine("[" + sScriptName + "] -> Update user account in Pharos");
+        }
+        catch
+        {
+            IO.PrintLine("[" + sScriptName + "] -> Insert user account in Pharos");
+            User.Insert(PlugIn.UserName, "");
+      
+            // Set the billing option for the created account. Do not change it on updates.
+            User.SetProperty("billing_option", sDefaultBillingOption);
+        }
+
+          User.SetProperty("password", PlugIn.Password);
+          User.SetProperty("group", sUserGroup);
+	  User.SetProperty("user_alias", sUserAlias);
+        //User.SetProperty("last_name", sUserLastName);         
+        //User.SetProperty("first_names", sUserFirstName);         
+
+
+    } // if (PlugIn.Result)
+
+} // else/if (not bIsInnovativeValidationRequired)
+
