@@ -4,10 +4,10 @@
 //  Where:         Pharos Systems International.
 //
 //  	Description:
-//    	Handle logon event using Innovative gateway.  Blocks based on MBlock, Filtcode, 
-//    	fine amount, and expiration date.The patron Alias will be first two letters of 
-//	last name, first letter of first name and last 7 digits of barcode minus the last 
-//	digit.   
+//    	Handle logon event using Innovative gateway to check barcode and password.
+//		Blocks based on MBlock, Filtcode, fine amount, and expiration date.
+//		The patron Alias will be first two letters of last name, first letter of first name
+//		and last 7 digits of barcode minus the last digit.   
 //    	
 //---------------------------------------------------------------------------------------
 import "DB";
@@ -21,6 +21,7 @@ import "Win32";
 // Script Info
 //---------------------------------------------------------------------------------------
 // Script name and version.
+// **Change "LibNameHere" to library city
 
 new sScriptName          = "LibNameHere III Login";
 
@@ -64,17 +65,13 @@ new eErrorInvalidCardNumber	           = "Invalid Card Number.  Make sure you en
 new sPharosPath = Win32.RegQueryValue("SOFTWARE\\Pharos\\Installed Components", "Path");
 
 
-IO.PrintLine("DEBUG --> sPharosPath = [" + sPharosPath  + "]");
+// This line is for testing during logging only
+//IO.PrintLine("DEBUG --> sPharosPath = [" + sPharosPath  + "]");
 
 // - Uncomment the appropriate line based on bit version of the Pharos Release Station
+// -(This is legacy - DO NOT USE)
 // new sPharosPath = "c:\\Progra~1\\pharos"; //x86
 // new sPharosPath = "c:\\Progra~2\\pharos"; //x64
-
-// Path to create temporary files
-// new sTempPath = sPharosPath + "\\Temp\\";
-
-// Results file for user info.
-//new sResFile = sTempPath + PlugIn.Client + ".tmp";
 
 // Win32.SearchPath will return the shortened path and file names.
 // Be sure to specify the remainder of the path relative to the Pharos folder.
@@ -88,6 +85,7 @@ new iCmdTimeout = 30000;
 // User Name Formatting
 //-------------------------------------------------------
 // - Define the format that the name is returned from Innovative
+// - Do not change (Constant)
 new iNameFormatFirstLast               = 1; // "<<First Name>> <<Last Name>>"
 new iNameFormatLastFirst               = 2; // "<<Last Name>>, <<First Name>>"
 new iNameFormatLast                    = 3; // "<<Last Name>>"
@@ -95,46 +93,25 @@ new iNameFormatLast                    = 3; // "<<Last Name>>"
 new iNameFormat                        = iNameFormatLastFirst;   
 
 
-//-------------------------------------------------------
-// Group membership 
-//-------------------------------------------------------
-// - Define if the user's Pharos group membership should
-//   be determined from age, profile, or use default.
-new iGroupMembershipDefault            = 1; // Assign all users to default group (sDefaultGroup)
-new iGroupMembershipAge                = 2; // Assign users to Pharos group based on age.
-new iGroupMembershipProfile            = 3; // Assign users to Pharos group based on profile.
-
-new iGroupMembership                   = iGroupMembershipAge; 
-
-
 //---------------------------------------------------
 // User account settings and logon configuration
 //---------------------------------------------------
 // - Default Pharos account group name
+// - This is fallback if a Group Name cannot be found
 new sDefaultGroup                      = "public"; 
 new fDefaultMaximumFeeAmount           = 10.00;
 
 
 // ** - Defined age groups, corresponding Pharos group name, maximum fee amount
+// Additional groups can be added by uncommenting and changing settings
 new listDefaultGroupByAge              = 
 [ 
     // [ Minimum age, maximum age, group, maximum fee amount ]
-    [0, 9, "xx_child", 0.00],
-    [10, 12, "xx_child", 0.00],
-    [13, 17, "xx_child", 0.00],
+    [0, 17, "xx_child", 0.00],
+    //[13, 17, "xx_teen", 0.00],
     [18, 200, "xx_adult", 0.00]
 ];
 
-
-// - Defined user profile names, corresponding Pharos group name, maximum fee amount
-//   Profile names are case sensitive.
-new listPatronTypesToGroups            =
-[
-    ["99", "young adult", 2.00],
-    ["67", "young adult", 2.00],
-    ["98", "juvenille", 2.00],
-    ["251", "juvenille", 2.00]
-];
 
 // ** - List of Mblocks that will prevent a user using the system.
 //   Blocks are case sensitive.
@@ -154,19 +131,24 @@ new listFiltcodes						=
 new sDefaultBillingOption              = "Advance";
 
 // ** - Logon configuration settings
+
+// - Constants - Do Not Change
 new bUsePharosDBIfLMSOffline           = false;  // If true, users will be authenticated against the Pharos DB whenever the LMS is
                                                 // unavailable. Requires that the user exists in the Pharos Database.
                                                 // NOTE - this will bypass all LMS checks and updates.                                                
 new bIsPasswordRequired                = true;  // If true, do not pass logon to Innovative unless password has been entered.
-new bIsFeeAmountChecked                = false;  // If true, do not allow logon if the fee amount exceeds the maximum allowed.
 new bIsBirthDateRequired               = true;  // If true, do not allow logon if birthdate cannot be retrieved (if basing
                                                 // Pharos group membership on age).
 new bIsProfileRequired                 = false;  // If true, do not allow logon if profile cannot be retrieved (if basing
-                                                // Pharos group membership on profile).                                                
+                                                // Pharos group membership on profile). 
+
+// **Variables - Change to match requested settings**												
 new bCheckMblockFlags                  = true;  // If true, check the MBlocks.
 new bCheckInetAgree		       = false; // If true, check for Filtcode 1 or 2 for minors.
 new bCheckFiltcodeFlags		       = true;	// If true, check the Filtcodes.
 new bCheckExpiration                   = false;  // If true, check for card expiration.
+new bIsFeeAmountChecked                = false;  // If true, do not allow logon if the fee amount exceeds the maximum allowed.
+
 
 //---------------------------------------------------------------------------------------
 // Constants – DO NOT ALTER
@@ -460,7 +442,8 @@ else
     new fGroupFeeLimit  = fDefaultMaximumFeeAmount;
     new sUserGroup      = sDefaultGroup;
     new bIsMblocked     = false;
-    new bIsExpired      = false; 
+    new bIsExpired      = false;
+	new bIsFblocked		= false;
 
     //---------------------------------------------------
     // Attempt to check the user's card expiration
@@ -502,7 +485,13 @@ else
                 iCount += 1;
             }
 			IO.PrintLine("[" + sScriptName + "] -> User MBlocked: " + bIsMblocked);
-        }
+			if (bIsMblocked)
+			{
+            IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorMblock);   
+            PlugIn.Result = false;
+            PlugIn.Error = eErrorMblock;
+			}
+        } //if (bCheckMblockFlags)
 		
 	// If enabled, check the user expiration date.
         if (bCheckExpiration)
@@ -550,21 +539,129 @@ else
                 iCount += 1;
             }
 			IO.PrintLine("[" + sScriptName + "] -> User Expired: " + bIsExpired);
-        }       
-           
-        if (bIsMblocked)
-        {
-            IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorMblock);   
-            PlugIn.Result = false;
-            PlugIn.Error = eErrorMblock;
-        }
-		else if (bIsExpired)
-        {
+			if (bIsExpired)
+			{
             IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorUserExpired);   
             PlugIn.Result = false;
             PlugIn.Error = eErrorUserExpired;
-        }
-    }
+			}			
+        } //if (bCheckExpiration)
+						
+        // If enabled, check that the user is not blocked (Filtcode).
+		if (bCheckFiltcodeFlags)
+        {
+            IO.PrintLine("[" + sScriptName + "] -> Check Filtcodes.");  
+
+            // Find the block tag in the Logon plug-in results.
+            new iCount = 0;
+            while (iCount < List.Length(listCmdResults))
+            {
+                new iPos = String.Find(listCmdResults[iCount], sPlugInResultFiltcode);
+                if (iPos <> -1)
+                {
+                    // Get the Filtcode value.
+                    new sValueFiltcode = listCmdResults[iCount];
+                    String.Delete(sValueFiltcode, 0, iPos + String.Length(sPlugInResultFiltcode));
+
+                    IO.PrintLine("[" + sScriptName + "] -> Value - Filtcode: " + sValueFiltcode);  
+
+                    // Check if the value equates to the user being blocked.
+                    new iCount2 = 0;
+                    while (iCount2 < List.Length(listFiltcodes))
+                    {
+                        if (sValueFiltcode == listFiltcodes[iCount2])
+                        {
+                            bIsFblocked = true;
+                            iCount2 = List.Length(listFiltcodes);
+                        }
+                        iCount2 += 1;
+                    }
+		    iCount = List.Length(listCmdResults);
+                }
+                iCount += 1;
+            }
+			IO.PrintLine("[" + sScriptName + "] -> User FBlocked: " + bIsFblocked);
+			
+			if (bIsFblocked)
+			{
+				IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorFiltcode);   
+				PlugIn.Result = false;
+				PlugIn.Error = eErrorFiltcode;
+			}
+        } //if (bCheckFiltcodeFlags)
+
+		// If enabled check for Internet agreement signed.
+		if (bCheckInetAgree and (iUserAge < 18))
+		{
+			IO.PrintLine("[" + sScriptName + "] -> Check Inet Signed.");
+			
+			// Check for Filtcode 1 or 2.
+			new iCount3 = 0;
+			new bInetBlocked = true;
+			new bInetFound = false;
+            
+			while ((iCount3 < List.Length(listInetcodes)) and
+			not bInetFound)
+			{
+				if (sValueFiltcode == listInetcodes[iCount3])
+				{
+					bInetFound = true;
+					bInetBlocked = false;
+				}
+				iCount3 += 1;
+			}
+			IO.PrintLine("[" + sScriptName + "] -> User FBlocked (Inet agree): " + bInetBlocked);
+			if (bInetBlocked)
+			{
+				IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorInetAgree);   
+				PlugIn.Result = false;
+				PlugIn.Error = eErrorInetAgree;
+			}
+		} //if (bCheckInetAgree and (iUserAge < 18))
+
+		//---------------------------------------------------
+		// Attempt to check the user's fee amount. If it
+		// is greater than the allowed fee amount, then 
+		// deny access to the system.
+		//---------------------------------------------------
+		if (bIsFeeAmountChecked)
+		{
+			// Attempt to get the user's fee amount.
+			new iCount             = 1;
+			new bFoundFeeAmount    = false;
+			while (iCount < List.Length(listCmdResults) and
+				   not bFoundFeeAmount)
+			{
+				new iPos = String.Find(listCmdResults[iCount], sPlugInResultMoneyOwed);
+				if (iPos <> -1)
+				{
+					IO.PrintLine("[" + sScriptName + "] -> User's fee amount found.");
+					bFoundFeeAmount = true;
+		 
+					new sUserFeeAmount = listCmdResults[iCount];
+					String.Delete(sUserFeeAmount, 0, iPos + String.Length(sPlugInResultMoneyOwed));
+
+					fUserFeeAmount = 0.00 + sUserFeeAmount;
+					
+				} // if (iPos <> -1)
+
+				iCount += 1;
+		
+			} // while (iCount < List.Length(listCmdResults) and ...
+			
+			IO.PrintLine("[" + sScriptName + "] -> User's fee amount: " + fUserFeeAmount);
+			IO.PrintLine("[" + sScriptName + "] -> Maximum fee amount: " + fGroupFeeLimit);
+					
+			if (fUserFeeAmount >= fGroupFeeLimit)
+			{
+				IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorFeesTooLarge);
+				PlugIn.Result = false;
+				PlugIn.Error = eErrorFeesTooLarge;        
+			}
+
+
+		} // if (bIsFeeAmountChecked)        	
+    } //if (PlugIn.Result)
 
 
     //---------------------------------------------------
@@ -721,15 +818,12 @@ else
 	}
 	}
 
-    IO.PrintLine("[" + sScriptName + "] -> Group Membership Mode: " + iGroupMembership);
-
     //-------------------------------------------------------
     // If group membership is based on age:
     // Attempt to determine the user's age. If available,
     // determine the correct group for the user.
     //-------------------------------------------------------
-    if ((iGroupMembership == iGroupMembershipAge) and
-        PlugIn.Result)
+    if (PlugIn.Result)
     {
         // Attempt to get the user's birth date.
         new iCount             = 1;
@@ -830,184 +924,8 @@ else
                 iCount += 1;            
             }
         }
-	// --------------------------------------------------
-	// Check for Filtcode blocks and internet agreement
-	// signed.
-	// --------------------------------------------------
-	
-	// If enabled, check that the user is not blocked (Filtcode).
-	new bIsFblocked		= false;
-						
-        if (bCheckFiltcodeFlags)
-        {
-            IO.PrintLine("[" + sScriptName + "] -> Check Filtcodes.");  
-
-            // Find the block tag in the Logon plug-in results.
-            new iCount = 0;
-            while (iCount < List.Length(listCmdResults))
-            {
-                new iPos = String.Find(listCmdResults[iCount], sPlugInResultFiltcode);
-                if (iPos <> -1)
-                {
-                    // Get the Filtcode value.
-                    new sValueFiltcode = listCmdResults[iCount];
-                    String.Delete(sValueFiltcode, 0, iPos + String.Length(sPlugInResultFiltcode));
-
-                    IO.PrintLine("[" + sScriptName + "] -> Value - Filtcode: " + sValueFiltcode);  
-
-                    // Check if the value equates to the user being blocked.
-                    new iCount2 = 0;
-                    while (iCount2 < List.Length(listFiltcodes))
-                    {
-                        if (sValueFiltcode == listFiltcodes[iCount2])
-                        {
-                            bIsFblocked = true;
-                            iCount2 = List.Length(listFiltcodes);
-                        }
-                        iCount2 += 1;
-                    }
-		    iCount = List.Length(listCmdResults);
-                }
-                iCount += 1;
-            }
-			IO.PrintLine("[" + sScriptName + "] -> User FBlocked: " + bIsFblocked);
 			
-			if (bIsFblocked)
-			{
-				IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorFiltcode);   
-				PlugIn.Result = false;
-				PlugIn.Error = eErrorFiltcode;
-			}
-        }
-
-		// If enabled check for Internet agreement signed.
-		if (bCheckInetAgree and (iUserAge < 18))
-		{
-			IO.PrintLine("[" + sScriptName + "] -> Check Inet Signed.");
-			
-			// Check for Filtcode 1 or 2.
-			new iCount3 = 0;
-			new bInetBlocked = true;
-			new bInetFound = false;
-            
-			while ((iCount3 < List.Length(listInetcodes)) and
-			not bInetFound)
-			{
-				if (sValueFiltcode == listInetcodes[iCount3])
-				{
-					bInetFound = true;
-					bInetBlocked = false;
-				}
-				iCount3 += 1;
-			}
-			IO.PrintLine("[" + sScriptName + "] -> User FBlocked (Inet agree): " + bInetBlocked);
-			if (bInetBlocked)
-			{
-				IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorInetAgree);   
-				PlugIn.Result = false;
-				PlugIn.Error = eErrorInetAgree;
-			}
-		}		
-    } // if (PlugIn.Result)
-
-    //---------------------------------------------------
-    // If group membership is based on P Type:
-    // Attempt to get the user's profile. From the
-    // profile, determine the user's group.
-    //---------------------------------------------------
-    if ((iGroupMembership == iGroupMembershipProfile) and
-        PlugIn.Result)
-    {
-        IO.PrintLine("[" + sScriptName + "] -> Check profile.");  
-
-        // Attempt to get the user's birth date.
-        new iCount             = 1;
-        new bFoundProfile      = false;
-        while (iCount < List.Length(listCmdResults) and
-               not bFoundProfile)
-        {
-            new iPos = String.Find(listCmdResults[iCount], sPlugInResultPatronType);
-            if (iPos <> -1)
-            {
-                IO.PrintLine("[" + sScriptName + "] -> User's profile found.");
-     
-                new sValueUserProfile = listCmdResults[iCount];
-                String.Delete(sValueUserProfile, 0, iPos + String.Length(sPlugInResultPatronType));
-
-                IO.PrintLine("[" + sScriptName + "] -> Profile: " + sValueUserProfile);
-
-                // Find user group for profile.
-                new iCount2 = 0;
-                while (iCount2 < List.Length(listPatronTypesToGroups))
-                {
-                    if (sValueUserProfile == listPatronTypesToGroups[iCount2][0])
-                    {
-                        bFoundProfile = true;
-                        sUserGroup = listPatronTypesToGroups[iCount2][1];
-                        fGroupFeeLimit = listPatronTypesToGroups[iCount2][2];
-                        iCount2 = List.Length(listPatronTypesToGroups);
-                    }
-                    iCount2 += 1;
-                }
-
-            } // if (iPos <> -1)
-
-            iCount += 1;
-    
-        } // while (iCount < List.Length(listCmdResults) and ...
-
-        if (bIsProfileRequired and
-            not bFoundProfile)
-        {
-            IO.PrintLine("[" + sScriptName + "] -> User's profile is required, but could not be found or matched to a group.");
-            PlugIn.Result = false;
-            PlugIn.Error = eErrorProfileIsNotAvailable;
-        }
-    }
-    
-    //---------------------------------------------------
-    // Attempt to check the user's fee amount. If it
-    // is greater than the allowed fee amount, then 
-    // deny access to the system.
-    //---------------------------------------------------
-    if (PlugIn.Result and
-        bIsFeeAmountChecked)
-    {
-        // Attempt to get the user's fee amount.
-        new iCount             = 1;
-        new bFoundFeeAmount    = false;
-        while (iCount < List.Length(listCmdResults) and
-               not bFoundFeeAmount)
-        {
-            new iPos = String.Find(listCmdResults[iCount], sPlugInResultMoneyOwed);
-            if (iPos <> -1)
-            {
-                IO.PrintLine("[" + sScriptName + "] -> User's fee amount found.");
-                bFoundFeeAmount = true;
-     
-                new sUserFeeAmount = listCmdResults[iCount];
-                String.Delete(sUserFeeAmount, 0, iPos + String.Length(sPlugInResultMoneyOwed));
-
-                fUserFeeAmount = 0.00 + sUserFeeAmount;
-                
-            } // if (iPos <> -1)
-
-            iCount += 1;
-    
-        } // while (iCount < List.Length(listCmdResults) and ...
-        
-        IO.PrintLine("[" + sScriptName + "] -> User's fee amount: " + fUserFeeAmount);
-        IO.PrintLine("[" + sScriptName + "] -> Maximum fee amount: " + fGroupFeeLimit);
-                
-        if (fUserFeeAmount >= fGroupFeeLimit)
-        {
-            IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorFeesTooLarge);
-            PlugIn.Result = false;
-            PlugIn.Error = eErrorFeesTooLarge;        
-        }
-
-
-    } // if (PlugIn.Result and ...        
+    } // if (PlugIn.Result)    
 
 
     //---------------------------------------------------
