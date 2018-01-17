@@ -617,50 +617,7 @@ else
 				PlugIn.Result = false;
 				PlugIn.Error = eErrorInetAgree;
 			}
-		} //if (bCheckInetAgree and (iUserAge < 18))
-
-		//---------------------------------------------------
-		// Attempt to check the user's fee amount. If it
-		// is greater than the allowed fee amount, then 
-		// deny access to the system.
-		//---------------------------------------------------
-		if (bIsFeeAmountChecked)
-		{
-			// Attempt to get the user's fee amount.
-			new iCount             = 1;
-			new bFoundFeeAmount    = false;
-			while (iCount < List.Length(listCmdResults) and
-				   not bFoundFeeAmount)
-			{
-				new iPos = String.Find(listCmdResults[iCount], sPlugInResultMoneyOwed);
-				if (iPos <> -1)
-				{
-					IO.PrintLine("[" + sScriptName + "] -> User's fee amount found.");
-					bFoundFeeAmount = true;
-		 
-					new sUserFeeAmount = listCmdResults[iCount];
-					String.Delete(sUserFeeAmount, 0, iPos + String.Length(sPlugInResultMoneyOwed));
-
-					fUserFeeAmount = 0.00 + sUserFeeAmount;
-					
-				} // if (iPos <> -1)
-
-				iCount += 1;
-		
-			} // while (iCount < List.Length(listCmdResults) and ...
-			
-			IO.PrintLine("[" + sScriptName + "] -> User's fee amount: " + fUserFeeAmount);
-			IO.PrintLine("[" + sScriptName + "] -> Maximum fee amount: " + fGroupFeeLimit);
-					
-			if (fUserFeeAmount >= fGroupFeeLimit)
-			{
-				IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorFeesTooLarge);
-				PlugIn.Result = false;
-				PlugIn.Error = eErrorFeesTooLarge;        
-			}
-
-
-		} // if (bIsFeeAmountChecked)        	
+		} //if (bCheckInetAgree and (iUserAge < 18))		
     } //if (PlugIn.Result)
 
 
@@ -925,7 +882,48 @@ else
             }
         }
 			
-    } // if (PlugIn.Result)    
+    } // if (PlugIn.Result)
+
+	//---------------------------------------------------
+	// Attempt to check the user's fee amount. If it
+	// is greater than the allowed fee amount, then 
+	// deny access to the system.
+	//---------------------------------------------------
+	if (bIsFeeAmountChecked)
+	{
+		// Attempt to get the user's fee amount.
+		new iCount             = 1;
+		new bFoundFeeAmount    = false;
+		while (iCount < List.Length(listCmdResults) and
+			   not bFoundFeeAmount)
+		{
+			new iPos = String.Find(listCmdResults[iCount], sPlugInResultMoneyOwed);
+			if (iPos <> -1)
+			{
+				IO.PrintLine("[" + sScriptName + "] -> User's fee amount found.");
+				bFoundFeeAmount = true;
+	 
+				new sUserFeeAmount = listCmdResults[iCount];
+				String.Delete(sUserFeeAmount, 0, iPos + String.Length(sPlugInResultMoneyOwed));
+
+				fUserFeeAmount = 0.00 + sUserFeeAmount;
+				
+			} // if (iPos <> -1)
+
+			iCount += 1;
+	
+		} // while (iCount < List.Length(listCmdResults) and ...
+		
+		IO.PrintLine("[" + sScriptName + "] -> User's fee amount: " + fUserFeeAmount);
+		IO.PrintLine("[" + sScriptName + "] -> Maximum fee amount: " + fGroupFeeLimit);
+				
+		if (fUserFeeAmount >= fGroupFeeLimit)
+		{
+			IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorFeesTooLarge);
+			PlugIn.Result = false;
+			PlugIn.Error = eErrorFeesTooLarge;        
+		}
+	} // if (bIsFeeAmountChecked)        		
 
 
     //---------------------------------------------------
