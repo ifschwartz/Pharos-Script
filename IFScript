@@ -889,7 +889,7 @@ else
 	// is greater than the allowed fee amount, then 
 	// deny access to the system.
 	//---------------------------------------------------
-	if (bIsFeeAmountChecked)
+	if (PlugIn.Result and bIsFeeAmountChecked)
 	{
 		// Attempt to get the user's fee amount.
 		new iCount             = 1;
@@ -923,7 +923,7 @@ else
 			PlugIn.Result = false;
 			PlugIn.Error = eErrorFeesTooLarge;        
 		}
-	} // if (bIsFeeAmountChecked)        		
+	} // if (PlugIn.Result and bIsFeeAmountChecked)        		
 
 
     //---------------------------------------------------
