@@ -20,9 +20,10 @@ import "Win32";
 //---------------------------------------------------------------------------------------
 // Script Info
 //---------------------------------------------------------------------------------------
+//************************************************
 // Script name and version.
 // ** Change "LibNameHere" to the library city **
-
+//************************************************
 new sScriptName          = "LibNameHere III Login";
 
 IO.PrintLine("Solution: " + sScriptName);
@@ -39,7 +40,7 @@ IO.PrintLine("Copyright: Pharos Systems International");
 // - Change the text between the quotes where necessary.
 //-------------------------------------------------------
 new eErrorInvalidUserNamePassword      = "Invalid username or pin";
-new eErrorPinNotValid	       	         = "Invalid Pin.";
+new eErrorPinNotValid	       	       = "Invalid Pin.";
 new eErrorPlugInResultsNotValid        = "Results from Logon plug-in are not valid. Please go to the Circulation Desk.";
 new eErrorPasswordIsEmpty              = "You must enter a pin.";
 new eErrorFeesTooLarge                 = "You have exceeded the fine limit. You must pay your fines before you can access the system.";
@@ -48,9 +49,9 @@ new eErrorProfileIsNotAvailable        = "You cannot logon as the system cannot 
 new eErrorUserExpired                  = "Your account has expired. Please go to the Circulation Desk to update your library card.";
 new eErrorFailedToCheckExpiry          = "Unable to verify the expiry date on your account. Please go to the Circulation Desk.";
 new eErrorFiltcode                     = "Your account is blocked (FILTCODE).  Please go to the Circulation Desk.";
-new eErrorInetAgree		                 = "Your Account is blocked.  Internet Agreement not signed.  Please go to the circulation desk.";
+new eErrorInetAgree		       = "Your Account is blocked.  Internet Agreement not signed.  Please go to the circulation desk.";
 new eErrorMblock                       = "Your account is blocked (MBLOCK).  Please go to the Circulation Desk.";
-new eErrorInvalidCardNumber	           = "Invalid Card Number.  Make sure you enter your full card number with no spaces.";
+new eErrorInvalidCardNumber	       = "Invalid Card Number.  Make sure you enter your full card number with no spaces.";
 
 
 //-------------------------------------------------------
@@ -94,11 +95,13 @@ new iNameFormat                        = iNameFormatLastFirst;
 //---------------------------------------------------
 // - Default Pharos account group name
 // - This is just a fallback if a group is not defined or found below
-new sDefaultGroup                      = "wvrh_adult"; 
+new sDefaultGroup                      = "wv_adult"; 
 new fDefaultMaximumFeeAmount           = 10.00;
 
 
-// ** - Defined age groups, corresponding Pharos group name, maximum fee amount
+//*******************************************************************************
+// ** - Defined age groups, corresponding Pharos group name, maximum fee amount**
+//*******************************************************************************
 new listDefaultGroupByAge              = 
 [ 
     // [ Minimum age, maximum age, group, maximum fee amount ]
@@ -116,20 +119,22 @@ new sDefaultBillingOption              = "Advance";
 // ** - Logon configuration settings - **
 
 // Constants - Do not change
-new bUsePharosDBIfLMSOffline           = false;  // If true, users will be authenticated against the Pharos DB whenever the LMS is
+new bUsePharosDBIfLMSOffline           = false; // If true, users will be authenticated against the Pharos DB whenever the LMS is
                                                 // unavailable. Requires that the user exists in the Pharos Database.
                                                 // NOTE - this will bypass all LMS checks and updates.                                                
 new bIsPasswordRequired                = true;  // If true, do not pass logon to Innovative unless password has been entered.
 new bIsBirthDateRequired               = true;  // If true, do not allow logon if birthdate cannot be retrieved (if basing
                                                 // Pharos group membership on age).
-new bIsProfileRequired                 = false;  // If true, do not allow logon if profile cannot be retrieved (if basing
+new bIsProfileRequired                 = false; // If true, do not allow logon if profile cannot be retrieved (if basing
                                                 // Pharos group membership on profile).                                                
-new bCheckMblockFlags                  = false;  // ** If true, check the MBlocks. **
+new bCheckMblockFlags                  = false; // ** If true, check the MBlocks. **
 new bCheckInetAgree		       = false; // If true, check for Filtcode 1 or 2 for minors.
 new bCheckFiltcodeFlags		       = false;	// If true, check the Filtcodes.
 
+//****************************************************
 // ** Variables to change based on library settings **
-new bCheckExpiration                   = true;  // ** If true, check for card expiration. **
+//****************************************************
+new bCheckExpiration                   = false; // ** If true, check for card expiration. **
 new bIsFeeAmountChecked                = true;  // ** If true, do not allow logon if the fee amount exceeds the maximum allowed. ** 
 
 //---------------------------------------------------------------------------------------
@@ -256,7 +261,7 @@ else
 		//---------------------------------------------------
 		IO.PrintLine("[" + sScriptName + "] -> Check user using Innovative.");
 		
-	new sCmdTemporaryFile = Win32.GetTempFileName();		
+		new sCmdTemporaryFile = Win32.GetTempFileName();		
 		new sCmdLogonPlugIn = sCmdLogonPlugInFileName += sCmdTemporaryFile + " User " + PlugIn.UserName + " " + PlugIn.Password;
  
 		IO.PrintLine("[" + sScriptName + "] -> PlugIn Command: " + sCmdLogonPlugIn);                       
@@ -422,52 +427,14 @@ else
                 }
                 iCount += 1;
             }
-			IO.PrintLine("[" + sScriptName + "] -> User Expired: " + bIsExpired);
-        } // if (bCheckExpiration)
-		
-		// If enabled, check the user late fees.
-		if (bIsFeeAmountChecked)
-		{
-        // Attempt to get the user's fee amount.
-        new iCount             = 1;
-        new bFoundFeeAmount    = false;
-        while (iCount < List.Length(listCmdResults) and
-               not bFoundFeeAmount)
-        {
-            new iPos = String.Find(listCmdResults[iCount], sPlugInResultMoneyOwed);
-            if (iPos <> -1)
-            {
-                IO.PrintLine("[" + sScriptName + "] -> User's fee amount found.");
-                bFoundFeeAmount = true;
-     
-                new sUserFeeAmount = listCmdResults[iCount];
-                String.Delete(sUserFeeAmount, 0, iPos + String.Length(sPlugInResultMoneyOwed));
-
-                fUserFeeAmount = 0.00 + sUserFeeAmount;
-                
-            } // if (iPos <> -1)
-
-            iCount += 1;
-    
-        } // while (iCount < List.Length(listCmdResults) and ...
-		        
-        IO.PrintLine("[" + sScriptName + "] -> User's fee amount: " + fUserFeeAmount);
-        IO.PrintLine("[" + sScriptName + "] -> Maximum fee amount: " + fGroupFeeLimit);
-		} // if(bIsFeeAmountChecked)
-                
-        if (fUserFeeAmount >= fGroupFeeLimit)
-        {
-            IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorFeesTooLarge);
-            PlugIn.Result = false;
-            PlugIn.Error = eErrorFeesTooLarge;        
-        }       
-           
-        if (bIsExpired)
-        {
-            IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorUserExpired);   
-            PlugIn.Result = false;
-            PlugIn.Error = eErrorUserExpired;
-        }
+			IO.PrintLine("[" + sScriptName + "] -> User Expired: " + bIsExpired);                
+			if (bIsExpired)
+			{
+				IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorUserExpired);   
+				PlugIn.Result = false;
+				PlugIn.Error = eErrorUserExpired;
+			}
+		} // if (bCheckExpiration)
     } // if (PlugIn.Result)
 
 
@@ -572,7 +539,7 @@ else
 	// minus the last digit.
 	//-------------------------------------------------------
 	new sNewUserLN = sUserLastName;
-    new sCardNumber = PlugIn.UserName;
+   	new sCardNumber = PlugIn.UserName;
 	
 	if (PlugIn.Result)
 	{          
@@ -635,8 +602,7 @@ else
         // Attempt to get the user's birth date.
         new iCount             = 1;
         new bFoundBirthdate    = false;
-        while (iCount < List.Length(listCmdResults) and
-               not bFoundBirthdate)
+        while (iCount < List.Length(listCmdResults) and not bFoundBirthdate)
         {
             new iPos = String.Find(listCmdResults[iCount], sPlugInResultBirthDate);
             if (iPos <> -1)
@@ -731,7 +697,47 @@ else
                 iCount += 1;            
             }
         }
-} // if (PlugIn.Result)
+	} // if (PlugIn.Result)
+	
+	//---------------------------------------------------
+	// Attempt to check the user's fee amount. If it
+	// is greater than the allowed fee amount, then 
+	// deny access to the system.
+	//---------------------------------------------------
+	if (PlugIn.Result and bIsFeeAmountChecked)
+	{
+		// Attempt to get the user's fee amount.
+		new iCount             = 1;
+		new bFoundFeeAmount    = false;
+		while (iCount < List.Length(listCmdResults) and not bFoundFeeAmount)
+		{
+			new iPos = String.Find(listCmdResults[iCount], sPlugInResultMoneyOwed);
+			if (iPos <> -1)
+			{
+				IO.PrintLine("[" + sScriptName + "] -> User's fee amount found.");
+				bFoundFeeAmount = true;
+	 
+				new sUserFeeAmount = listCmdResults[iCount];
+				String.Delete(sUserFeeAmount, 0, iPos + String.Length(sPlugInResultMoneyOwed));
+
+				fUserFeeAmount = 0.00 + sUserFeeAmount;
+				
+			} // if (iPos <> -1)
+
+			iCount += 1;
+	
+		} // while (iCount < List.Length(listCmdResults) and ...
+		
+		IO.PrintLine("[" + sScriptName + "] -> User's fee amount: " + fUserFeeAmount);
+		IO.PrintLine("[" + sScriptName + "] -> Maximum fee amount: " + fGroupFeeLimit);
+				
+		if (fUserFeeAmount >= fGroupFeeLimit)
+		{
+			IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorFeesTooLarge);
+			PlugIn.Result = false;
+			PlugIn.Error = eErrorFeesTooLarge;        
+		}
+	} // if (PlugIn.Result and bIsFeeAmountChecked)
 
     //---------------------------------------------------
     // Synchronize the Pharos database by:
@@ -768,4 +774,3 @@ else
     } // if (PlugIn.Result)
 
 } // else/if (not bIsInnovativeValidationRequired)
-
