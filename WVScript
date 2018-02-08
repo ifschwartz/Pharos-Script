@@ -20,11 +20,11 @@ import "Win32";
 //---------------------------------------------------------------------------------------
 // Script Info
 //---------------------------------------------------------------------------------------
-//************************************************
 // Script name and version.
+//***********************************************
 // ** Change "LibNameHere" to the library city **
-//************************************************
-new sScriptName          = "LibNameHere III Login";
+//***********************************************
+new sScriptName          = "LinNameHere III Login";
 
 IO.PrintLine("Solution: " + sScriptName);
 IO.PrintLine("Version: 9.0 R2");
@@ -52,6 +52,7 @@ new eErrorFiltcode                     = "Your account is blocked (FILTCODE).  P
 new eErrorInetAgree		       = "Your Account is blocked.  Internet Agreement not signed.  Please go to the circulation desk.";
 new eErrorMblock                       = "Your account is blocked (MBLOCK).  Please go to the Circulation Desk.";
 new eErrorInvalidCardNumber	       = "Invalid Card Number.  Make sure you enter your full card number with no spaces.";
+new eErrorPcode			       = "Your account is blocked.  Please go to the Circulation Desk.";
 
 
 //-------------------------------------------------------
@@ -95,13 +96,13 @@ new iNameFormat                        = iNameFormatLastFirst;
 //---------------------------------------------------
 // - Default Pharos account group name
 // - This is just a fallback if a group is not defined or found below
-new sDefaultGroup                      = "wv_adult"; 
+new sDefaultGroup                      = "wvrh_adult"; 
 new fDefaultMaximumFeeAmount           = 10.00;
 
 
-//*******************************************************************************
-// ** - Defined age groups, corresponding Pharos group name, maximum fee amount**
-//*******************************************************************************
+//*****************************************************************************
+// ** - Defined age groups, corresponding Pharos group name, maximum fee amount
+//*****************************************************************************
 new listDefaultGroupByAge              = 
 [ 
     // [ Minimum age, maximum age, group, maximum fee amount ]
@@ -110,6 +111,15 @@ new listDefaultGroupByAge              =
     // "xx" should be replaced with library 2-letter code
 	 [0, 17, "wvxx_child", 5.00],
 	 [18, 200, "wvxx_adult", 5.00]
+];
+
+//******************************************************************
+// ** - List of Pcodes2 that will prevent the user using the system.
+//	  - Codes are case sensitive.
+//******************************************************************
+new listPcodes						=
+[
+	"a","d"	 
 ];
 
 
@@ -127,15 +137,17 @@ new bIsBirthDateRequired               = true;  // If true, do not allow logon i
                                                 // Pharos group membership on age).
 new bIsProfileRequired                 = false; // If true, do not allow logon if profile cannot be retrieved (if basing
                                                 // Pharos group membership on profile).                                                
-new bCheckMblockFlags                  = false; // ** If true, check the MBlocks. **
+new bCheckMblockFlags                  = false; //If true, check the MBlocks.
 new bCheckInetAgree		       = false; // If true, check for Filtcode 1 or 2 for minors.
 new bCheckFiltcodeFlags		       = false;	// If true, check the Filtcodes.
+
 
 //****************************************************
 // ** Variables to change based on library settings **
 //****************************************************
-new bCheckExpiration                   = false; // ** If true, check for card expiration. **
-new bIsFeeAmountChecked                = true;  // ** If true, do not allow logon if the fee amount exceeds the maximum allowed. ** 
+new bCheckExpiration                   = true;  // ** If true, check for card expiration. **
+new bIsFeeAmountChecked                = true;  // ** If true, do not allow logon if the fee amount exceeds the maximum allowed. **
+new bCheckPcodeFlags		       = true;  // **If true, check the Pcode2 field for patron blocked.**
 
 //---------------------------------------------------------------------------------------
 // Constants – DO NOT ALTER
@@ -171,6 +183,7 @@ new sPlugInResultPatronType            = "P TYPE[p47]=";
 new sPlugInResultPersonalName          = "PATRN NAME[pn]=";
 new sPlugInResultMoneyOwed             = "MONEY OWED[p96]=$";
 new sPlugInResultBirthDate             = "BIRTH DATE[p51]=";
+new sPlugInResultPcode		       = "PCODE2[p45]=";
 
 // Innovative date format lengths - assumes that the Innovative
 // system is configured to return dates as mm-dd-yyyy.
@@ -366,7 +379,7 @@ else
 
 	} // else/if (String.IsEmpty(PlugIn.Password) ...
 		
-	//---------------------------------------------------
+    //---------------------------------------------------
     // Initialize user variables.
     //---------------------------------------------------
     new iUserAge        = -1;    
@@ -375,15 +388,58 @@ else
     new fUserFeeAmount  = 0.00;    
     new fGroupFeeLimit  = fDefaultMaximumFeeAmount;
     new sUserGroup      = sDefaultGroup;
-    new bIsExpired      = false; 
+    new bIsExpired      = false;
+    new bIsPcode	= false;
 
     //---------------------------------------------------
     // Attempt to check the user's card expiration
-    // and fee amount blocks.
+    // date and Pcode blocks.
     //---------------------------------------------------
     if (PlugIn.Result)
     {
-        // If enabled, check the user expiration date.
+        // If enabled, check that the user is not blocked (Pcode).
+        if (bCheckPcodeFlags)
+        {
+            IO.PrintLine("[" + sScriptName + "] -> Check Pcode2.");  
+
+            // Find the block tag in the Logon plug-in results.
+            new iCount = 0;
+            while (iCount < List.Length(listCmdResults))
+            {
+                new iPos = String.Find(listCmdResults[iCount], sPlugInResultPcode);
+                if (iPos <> -1)
+                {
+                    // Get the Pcode2 value.
+                    new sValuePcode = listCmdResults[iCount];
+                    String.Delete(sValuePcode, 0, iPos + String.Length(sPlugInResultPcode));
+
+                    IO.PrintLine("[" + sScriptName + "] -> Value - Pcode2: " + sValuePcode);  
+
+                    // Check if the value equates to the user being blocked.
+                    new iCount2 = 0;
+                    while (iCount2 < List.Length(listPcodes))
+                    {
+                        if (sValuePcode == listPcodes[iCount2])
+                        {
+                            bIsPcode = true;
+                            iCount2 = List.Length(listPcodes);
+                        }
+                        iCount2 += 1;
+                    }
+                    iCount = List.Length(listCmdResults);
+                }
+                iCount += 1;
+            }
+			IO.PrintLine("[" + sScriptName + "] -> User Pcode blocked: " + bIsPcode);
+			if (bIsPcode)
+			{
+				IO.PrintLine("[" + sScriptName + "] -> Error: " + eErrorPcode);   
+				PlugIn.Result = false;
+				PlugIn.Error = eErrorPcode;
+			}
+		}//If (bCheckPcodeFlags)
+		
+		// If enabled, check the user expiration date.
         if (bCheckExpiration)
         {
             IO.PrintLine("[" + sScriptName + "] -> Check expiration.");  
@@ -539,39 +595,39 @@ else
 	// minus the last digit.
 	//-------------------------------------------------------
 	new sNewUserLN = sUserLastName;
-   	new sCardNumber = PlugIn.UserName;
+    	new sCardNumber = PlugIn.UserName;
 	
 	if (PlugIn.Result)
 	{          
 	    String.Right(sCardNumber,7);
-        String.Delete(sCardNumber,6);
-        String.TrimLeft(sNewUserLN);
-	// Make sure the newlastname is greater than 2 characters.
-           if(String.Length(sNewUserLN) > 2)
-           {
-           	String.Delete(sNewUserLN,2);
-           }
-	// Make sure the firstname is greater than 1 character.
-           if(String.Length(sUserFirstName) > 1)
-           {        
-           	String.Delete(sUserFirstName,1);
-           }  
-           new sUserAlias = sNewUserLN+sUserFirstName+sCardNumber;
-		   IO.PrintLine("[" + sScriptName + "] -> User's Alias: " + sUserAlias);
+            String.Delete(sCardNumber,6);
+            String.TrimLeft(sNewUserLN);
+	    // Make sure the newlastname is greater than 2 characters.
+               if(String.Length(sNewUserLN) > 2)
+               {
+           	    String.Delete(sNewUserLN,2);
+               }
+	    // Make sure the firstname is greater than 1 character.
+               if(String.Length(sUserFirstName) > 1)
+               {        
+           	    String.Delete(sUserFirstName,1);
+               }  
+               new sUserAlias = sNewUserLN+sUserFirstName+sCardNumber;
+	       IO.PrintLine("[" + sScriptName + "] -> User's Alias: " + sUserAlias);
 	   // Protect against duplicate Aliases~~~~~~~~~~~~~~~~~~~~~~~
 	   // Add ' to sUserAlias if it already has one.
 
-	   if(String.Find(sUserAlias,  "'") <> -1)
-	   {
-	   	new pos = String.Find(sUserAlias, "'");
-		String.Insert(sUserAlias, pos, "'");
-	   }
-            new anum = 1;
-            new gen = "0";
-               while(gen == "0")
-               {
-               	new strqry = "select id, User_Alias from users where User_Alias = '" + sUserAlias +"' and id <> '" + PlugIn.UserName + "'";
-                DB.SQL(strqry);
+	       if(String.Find(sUserAlias,  "'") <> -1)
+	       {
+	   	    new pos = String.Find(sUserAlias, "'");
+		    String.Insert(sUserAlias, pos, "'");
+	       }
+                new anum = 1;
+                new gen = "0";
+                while(gen == "0")
+                {
+               	    new strqry = "select id, User_Alias from users where User_Alias = '" + sUserAlias +"' and id <> '" + PlugIn.UserName + "'";
+                    DB.SQL(strqry);
                   if(DB.GetRow())
                   {
                  	new sUserAlias = sNewUserLN+sUserFirstName+sCardNumber + anum;
@@ -602,7 +658,8 @@ else
         // Attempt to get the user's birth date.
         new iCount             = 1;
         new bFoundBirthdate    = false;
-        while (iCount < List.Length(listCmdResults) and not bFoundBirthdate)
+        while (iCount < List.Length(listCmdResults) and
+               not bFoundBirthdate)
         {
             new iPos = String.Find(listCmdResults[iCount], sPlugInResultBirthDate);
             if (iPos <> -1)
@@ -709,7 +766,8 @@ else
 		// Attempt to get the user's fee amount.
 		new iCount             = 1;
 		new bFoundFeeAmount    = false;
-		while (iCount < List.Length(listCmdResults) and not bFoundFeeAmount)
+		while (iCount < List.Length(listCmdResults) and
+			   not bFoundFeeAmount)
 		{
 			new iPos = String.Find(listCmdResults[iCount], sPlugInResultMoneyOwed);
 			if (iPos <> -1)
